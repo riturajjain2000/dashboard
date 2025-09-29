@@ -90,6 +90,30 @@ func run(ctx context.Context, opts *options.Options) error {
 	return nil
 }
 
+func generateAPIProxy(remoteURL string, director func(*http.Request, *gin.Context)) (gin.HandlerFunc, error) {
+	remoteEndpoint, err := url.Parse(remoteURL)
+	if err != nil {
+		return nil, err
+	}
+
+	return func(c *gin.Context) {
+		if c.Request.Header.Get("Authorization") == "" {
+			c.String(http.StatusUnauthorized, "Forbidden")
+			c.Abort()
+			return
+		}
+		proxy := httputil.NewSingleHostReverseProxy(remoteEndpoint)
+		originalDirector := proxy.Director
+		proxy.Director = func(req *http.Request) {
+			originalDirector(req)
+			req.Header = c.Request.Header.Clone()
+			req.Host = remoteEndpoint.Host
+			director(req, c)
+		}
+		proxy.ServeHTTP(c.Writer, c.Request)
+	}, nil
+}
+
 func serve(opts *options.Options) {
 	insecureAddress := fmt.Sprintf("%s:%d", opts.InsecureBindAddress, opts.InsecurePort)
 	klog.V(1).InfoS("Listening and serving on", "address", insecureAddress)
